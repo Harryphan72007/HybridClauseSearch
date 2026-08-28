@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import typer
 
@@ -41,9 +42,8 @@ def doctor() -> None:
 def _check_writable(path: Path) -> bool:
     try:
         path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".write_probe"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
+        with NamedTemporaryFile(dir=path):
+            pass
         return True
     except OSError:
         return False
