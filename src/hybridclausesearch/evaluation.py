@@ -41,8 +41,13 @@ class Evaluation(BaseModel):
     zero_hit_queries: int
 
 
-def evaluate(queries: tuple[ReviewedQuery, ...], judgments: tuple[RelevanceJudgment, ...],
-             runs: dict[str, tuple[SearchResult, ...]], *, k: int = 10) -> Evaluation:
+def evaluate(
+    queries: tuple[ReviewedQuery, ...],
+    judgments: tuple[RelevanceJudgment, ...],
+    runs: dict[str, tuple[SearchResult, ...]],
+    *,
+    k: int = 10,
+) -> Evaluation:
     if k < 1 or not queries:
         raise ValueError("evaluation needs queries and positive k")
     query_ids = [query.query_id for query in queries]
@@ -64,7 +69,10 @@ def evaluate(queries: tuple[ReviewedQuery, ...], judgments: tuple[RelevanceJudgm
         hits = runs.get(query.query_id, ())
         if not hits:
             zero_hits += 1
-        if any(hit.snapshot_sha256 != query.snapshot_sha256 or hit.query_id != query.query_id for hit in hits):
+        if any(
+            hit.snapshot_sha256 != query.snapshot_sha256 or hit.query_id != query.query_id
+            for hit in hits
+        ):
             raise ValueError("run identity mismatch")
         ids = [hit.provision_version_id for hit in hits]
         if len(set(ids)) != len(ids) or [hit.rank for hit in hits] != list(range(1, len(hits) + 1)):
@@ -75,8 +83,16 @@ def evaluate(queries: tuple[ReviewedQuery, ...], judgments: tuple[RelevanceJudgm
         totals[0] += sum(grade > 0 for grade in selected) / relevant if relevant else 0.0
         totals[1] += next((1 / rank for rank, grade in enumerate(selected, 1) if grade > 0), 0.0)
         dcg = sum((2**grade - 1) / math.log2(rank + 1) for rank, grade in enumerate(selected, 1))
-        ideal = sum((2**grade - 1) / math.log2(rank + 1) for rank, grade in enumerate(sorted(grades.values(), reverse=True)[:k], 1))
+        ideal = sum(
+            (2**grade - 1) / math.log2(rank + 1)
+            for rank, grade in enumerate(sorted(grades.values(), reverse=True)[:k], 1)
+        )
         totals[2] += dcg / ideal if ideal else 0.0
-    return Evaluation(query_count=len(queries), k=k, recall_at_k=totals[0] / len(queries),
-                      mrr_at_k=totals[1] / len(queries), ndcg_at_k=totals[2] / len(queries),
-                      zero_hit_queries=zero_hits)
+    return Evaluation(
+        query_count=len(queries),
+        k=k,
+        recall_at_k=totals[0] / len(queries),
+        mrr_at_k=totals[1] / len(queries),
+        ndcg_at_k=totals[2] / len(queries),
+        zero_hit_queries=zero_hits,
+    )

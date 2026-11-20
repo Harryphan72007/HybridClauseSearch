@@ -8,15 +8,22 @@ from typing import Any
 from hybridclausesearch.contracts import Eligibility, SearchRequest
 
 
-def assess(version: dict[str, Any], document: dict[str, Any], request: SearchRequest,
-           relations: tuple[dict[str, Any], ...] = ()) -> tuple[Eligibility, tuple[str, ...]]:
+def assess(
+    version: dict[str, Any],
+    document: dict[str, Any],
+    request: SearchRequest,
+    relations: tuple[dict[str, Any], ...] = (),
+) -> tuple[Eligibility, tuple[str, ...]]:
     if document.get("jurisdiction") != request.jurisdiction:
         return Eligibility.INELIGIBLE, ("jurisdiction outside requested scope",)
     if request.document_ids and version["document_id"] not in request.document_ids:
         return Eligibility.INELIGIBLE, ("document outside requested scope",)
     target = version["document_version_id"]
     for edge in relations:
-        if edge.get("relation_type") in ("repeals", "replaces") and edge.get("target", {}).get("record_id") == target:
+        if (
+            edge.get("relation_type") in ("repeals", "replaces")
+            and edge.get("target", {}).get("record_id") == target
+        ):
             when = edge.get("effective_from")
             if when is None:
                 return Eligibility.UNKNOWN, ("undated consequential relation",)

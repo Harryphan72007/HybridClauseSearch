@@ -23,7 +23,9 @@ class BM25Index:
         self.relations = snapshot.records["relation_edges"]
         self.counts = tuple(Counter(record.tokens) for record in self.records)
         self.df = Counter(token for counts in self.counts for token in counts)
-        self.avgdl = sum(len(r.tokens) for r in self.records) / len(self.records) if self.records else 0.0
+        self.avgdl = (
+            sum(len(r.tokens) for r in self.records) / len(self.records) if self.records else 0.0
+        )
 
     def search(self, request: SearchRequest) -> tuple[SearchResult, ...]:
         if request.snapshot_sha256 != self.snapshot.digest:
@@ -37,7 +39,9 @@ class BM25Index:
             version = self.versions[record.citation.document_version_id]
             document = self.documents[record.citation.document_id]
             eligibility, reasons = assess(version, document, request, self.relations)
-            if eligibility == Eligibility.INELIGIBLE or (eligibility == Eligibility.UNKNOWN and not request.include_unknown):
+            if eligibility == Eligibility.INELIGIBLE or (
+                eligibility == Eligibility.UNKNOWN and not request.include_unknown
+            ):
                 continue
             score = 0.0
             for token in query:
@@ -49,10 +53,18 @@ class BM25Index:
             if score > 0:
                 hits.append((score, record, eligibility, reasons))
         hits.sort(key=lambda hit: (-hit[0], hit[1].citation.provision_version_id))
-        return tuple(SearchResult(
-            snapshot_sha256=self.snapshot.digest, query_id=request.query_id,
-            provision_version_id=record.citation.provision_version_id, rank=rank,
-            score=score, component_scores={"bm25": score}, citation=record.citation,
-            review_date=request.review_date, eligibility=eligibility,
-            eligibility_reasons=reasons,
-        ) for rank, (score, record, eligibility, reasons) in enumerate(hits[:request.limit], 1))
+        return tuple(
+            SearchResult(
+                snapshot_sha256=self.snapshot.digest,
+                query_id=request.query_id,
+                provision_version_id=record.citation.provision_version_id,
+                rank=rank,
+                score=score,
+                component_scores={"bm25": score},
+                citation=record.citation,
+                review_date=request.review_date,
+                eligibility=eligibility,
+                eligibility_reasons=reasons,
+            )
+            for rank, (score, record, eligibility, reasons) in enumerate(hits[: request.limit], 1)
+        )

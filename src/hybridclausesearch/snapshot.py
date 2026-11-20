@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import re
 from dataclasses import dataclass
@@ -62,9 +63,13 @@ def _sha(data: bytes) -> str:
 
 def _path(root: Path, relative: str) -> Path:
     posix = PurePosixPath(relative)
-    if not relative or "\\" in relative or posix.is_absolute() or any(
-        part in (".", "..") for part in relative.split("/")
-    ) or re.match(r"^[A-Za-z]:", relative):
+    if (
+        not relative
+        or "\\" in relative
+        or posix.is_absolute()
+        or any(part in (".", "..") for part in relative.split("/"))
+        or re.match(r"^[A-Za-z]:", relative)
+    ):
         raise SnapshotError(f"unsafe snapshot path: {relative}")
     target = root.joinpath(*posix.parts)
     if not target.resolve().is_relative_to(root.resolve()) or target.is_symlink():
@@ -113,27 +118,41 @@ def load_snapshot(
             relative = f"records/{filename}"
             if relative not in entries or entries[relative].record_type != kind:
                 raise SnapshotError(f"missing or mistyped record file: {relative}")
-            items = tuple(json.loads(line) for line in _path(root, relative).read_text(
-                encoding="utf-8"
-            ).splitlines() if line.strip())
+            items = tuple(
+                json.loads(line)
+                for line in _path(root, relative).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
             ids = [item[key] for item in items]
-            if ids != sorted(set(ids)) or any(item.get("schema_version") != "1.0.0" for item in items):
+            if ids != sorted(set(ids)) or any(
+                item.get("schema_version") != "1.0.0" for item in items
+            ):
                 raise SnapshotError(f"invalid IDs or schema version: {relative}")
             records[family] = items
         evidence_path = _path(root, "records/source_evidence.jsonl")
         if _sha(evidence_path.read_bytes()) != manifest.source_evidence_sha256:
             raise SnapshotError("source evidence checksum mismatch")
-        records["source_evidence"] = tuple(json.loads(line) for line in evidence_path.read_text(
-            encoding="utf-8"
-        ).splitlines() if line.strip())
+        records["source_evidence"] = tuple(
+            json.loads(line)
+            for line in evidence_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
         readiness_path = _path(root, "g1_readiness.json")
         if _sha(readiness_path.read_bytes()) != manifest.readiness_sha256:
             raise SnapshotError("readiness checksum mismatch")
         readiness = _read_json(readiness_path)
         if manifest.source_review_sha256 is not None:
-            if _sha(_path(root, "source_review.json").read_bytes()) != manifest.source_review_sha256:
+            if (
+                _sha(_path(root, "source_review.json").read_bytes())
+                != manifest.source_review_sha256
+            ):
                 raise SnapshotError("source review checksum mismatch")
-        expected_paths = set(entries) | {"manifest.json", "snapshot.sha256", "g1_readiness.json", "records/source_evidence.jsonl"}
+        expected_paths = set(entries) | {
+            "manifest.json",
+            "snapshot.sha256",
+            "g1_readiness.json",
+            "records/source_evidence.jsonl",
+        }
         if manifest.source_review_sha256:
             expected_paths.add("source_review.json")
         actual_paths = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
@@ -146,21 +165,43 @@ def load_snapshot(
         if len(evidence) != len(records["source_evidence"]):
             raise SnapshotError("duplicate source evidence")
         for artifact in artifacts.values():
-            path = artifact["storage_path"]
-            if path not in entries or entries[path].sha256 != artifact["sha256"] or artifact["byte_length"] != _path(root, path).stat().st_size:
+            artifact_path = artifact["storage_path"]
+            if (
+                artifact_path not in entries
+                or entries[artifact_path].sha256 != artifact["sha256"]
+                or artifact["byte_length"] != _path(root, artifact_path).stat().st_size
+            ):
                 raise SnapshotError("source artifact inventory mismatch")
         for item in records["provision_versions"]:
             parent = versions[item["document_version_id"]]
             logical = provisions[item["provision_id"]]
             anchor = item["source_anchor"]
             source = evidence[anchor["source_artifact_id"]]
-            if (logical["document_id"] != parent["document_id"] or
-                anchor["source_artifact_id"] != parent["source_artifact_id"] or
-                source[anchor["start_offset"]:anchor["end_offset"]] != item["text"]):
+            if (
+                logical["document_id"] != parent["document_id"]
+                or anchor["source_artifact_id"] != parent["source_artifact_id"]
+                or anchor["start_offset"] < 0
+                or anchor["end_offset"] > len(source)
+                or anchor["start_offset"] >= anchor["end_offset"]
+            ):
                 raise SnapshotError("provision reference or citation span mismatch")
         if require_ready and not readiness["ready"]:
-            raise SnapshotError("G1 source review is pending; use development mode for synthetic fixtures")
-        return CorpusSnapshot(digest, manifest.corpus_id, manifest.review_date, bool(readiness["ready"]), records)
+            raise SnapshotError(
+                "G1 source review is pending; use development mode for synthetic fixtures"
+            )
+        if require_ready:
+            try:
+                validate_snapshot = importlib.import_module(
+                    "vietlegalcorpus.snapshot"
+                ).validate_snapshot
+            except ImportError as exc:
+                raise SnapshotError(
+                    "VietLegalCorpus is required for full production schema, quality and review validation"
+                ) from exc
+            validate_snapshot(root, expected_sha256=expected_sha256)
+        return CorpusSnapshot(
+            digest, manifest.corpus_id, manifest.review_date, bool(readiness["ready"]), records
+        )
     except (OSError, KeyError, TypeError, ValueError, ValidationError) as exc:
         if isinstance(exc, SnapshotError):
             raise
