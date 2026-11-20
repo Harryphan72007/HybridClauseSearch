@@ -3,15 +3,69 @@
 from __future__ import annotations
 
 import platform
+import json
+from datetime import date
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
 from hybridclausesearch import __version__
 from hybridclausesearch.config import load_settings
 from hybridclausesearch.logging import configure_logging
+from hybridclausesearch.bm25 import BM25Index
+from hybridclausesearch.contracts import SearchRequest
+from hybridclausesearch.snapshot import load_snapshot
+from hybridclausesearch.storage import load_index, save_index
 
 app = typer.Typer(add_completion=False, help="HybridClauseSearch CLI.")
+
+
+@app.command("index")
+def index_command(
+    snapshot_dir: Path, index_path: Path,
+    expected_sha256: Annotated[str, typer.Option("--expected-sha256")],
+    synthetic_development: Annotated[bool, typer.Option("--synthetic-development")] = False,
+) -> None:
+    """Build an index from a pinned, validated CorpusSnapshot."""
+    try:
+        snapshot = load_snapshot(snapshot_dir, expected_sha256=expected_sha256,
+                                 require_ready=not synthetic_development)
+        index = BM25Index(snapshot)
+        save_index(index, index_path)
+        typer.echo(json.dumps({"snapshot_sha256": snapshot.digest, "index_path": str(index_path),
+                               "record_count": len(index.records), "source_review_ready": snapshot.ready}, sort_keys=True))
+    except (OSError, ValueError, KeyError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("search")
+def search_command(
+    snapshot_dir: Path, index_path: Path, query: str,
+    expected_sha256: Annotated[str, typer.Option("--expected-sha256")],
+    review_date: Annotated[str, typer.Option("--review-date")],
+    query_id: Annotated[str, typer.Option("--query-id")] = "query:cli",
+    limit: Annotated[int, typer.Option("--limit", min=1)] = 10,
+    document_id: Annotated[list[str] | None, typer.Option("--document-id")] = None,
+    include_unknown: Annotated[bool, typer.Option("--include-unknown/--exclude-unknown")] = True,
+    synthetic_development: Annotated[bool, typer.Option("--synthetic-development")] = False,
+) -> None:
+    """Return ranked clauses and exact citations as structured JSON."""
+    try:
+        snapshot = load_snapshot(snapshot_dir, expected_sha256=expected_sha256,
+                                 require_ready=not synthetic_development)
+        request = SearchRequest(query_id=query_id, query=query, snapshot_sha256=expected_sha256,
+                                review_date=date.fromisoformat(review_date), limit=limit,
+                                document_ids=tuple(document_id or ()), include_unknown=include_unknown)
+        results = load_index(index_path, snapshot).search(request)
+        typer.echo(json.dumps({"query_id": request.query_id, "snapshot_sha256": snapshot.digest,
+                               "source_review_ready": snapshot.ready,
+                               "results": [hit.model_dump(mode="json") for hit in results]},
+                              ensure_ascii=True, sort_keys=True))
+    except (OSError, ValueError, KeyError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()
